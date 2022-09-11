@@ -39,6 +39,11 @@
 #include "wininfo.h"
 #include "tls_pbuf.h"
 
+#define QOS_QUERYFLOW_FRESH         0x00000001
+#define QOS_NON_ADAPTIVE_FLOW       0x00000002
+typedef ULONG QOS_FLOWID, *PQOS_FLOWID;
+#include <w32api/qos2.h>
+
 #define ASYNC_MASK (FD_READ|FD_WRITE|FD_OOB|FD_ACCEPT|FD_CONNECT)
 #define EVENT_MASK (FD_READ|FD_WRITE|FD_OOB|FD_ACCEPT|FD_CONNECT|FD_CLOSE)
 
@@ -1818,7 +1823,32 @@ fhandler_socket_inet::setsockopt (int level, int optname, const void *optval,
 	     and TOS was never implemented for TCP anyway.  setsockopt returns
 	     WinSock error 10022, WSAEINVAL when trying to set the IP_TOS
 	     field.  We just return 0 instead. */
-	  ignore = true;
+    {
+      HANDLE qosHandle;
+      QOS_FLOWID flowID;
+      DWORD dscpValue;
+      QOS_VERSION QosVersion = { 1 , 0 };
+
+      // Initialize the QoS subsystem
+      if (FALSE == QOSCreateHandle(&QosVersion, &qosHandle))
+      {
+        debug_printf("QOSCreateHandle failed (%d)\n", GetLastError());
+      }
+
+      // Create a flow for our socket
+      flowID = 0;
+      if (FALSE == QOSAddSocketToFlow(qosHandle, get_socket(), NULL, QOSTrafficTypeBestEffort, QOS_NON_ADAPTIVE_FLOW, &flowID))
+      {
+          debug_printf("QOSAddSocketToFlow failed (%d)\n", GetLastError());
+      }
+
+      // Set DSCP value for the flow
+      dscpValue = (*(int *) optval) >> 2;
+      if (FALSE == QOSSetFlow(qosHandle, flowID, (QOS_SET_FLOW) QOSSetOutgoingDSCPValue, sizeof(dscpValue), &dscpValue, 0, NULL))
+      {
+          debug_printf(" QOSSetFlow failed (%d)\n", GetLastError());
+      }
+    }
 	  break;
 
 	default:
